@@ -1,0 +1,75 @@
+services:
+
+  db:
+    image: postgres:16-alpine
+    container_name: vikunja-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vikunja}
+      POSTGRES_USER: ${POSTGRES_USER:-vikunja}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vikunja} -d ${POSTGRES_DB:-vikunja}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - vikunja-internal
+
+  api:
+    build:
+      context: ../../sources/api
+      dockerfile: ../../docker/api/Dockerfile
+    container_name: vikunja-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      VIKUNJA_DATABASE_TYPE: postgres
+      VIKUNJA_DATABASE_HOST: db
+      VIKUNJA_DATABASE_DATABASE: ${POSTGRES_DB:-vikunja}
+      VIKUNJA_DATABASE_USER: ${POSTGRES_USER:-vikunja}
+      VIKUNJA_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      VIKUNJA_SERVICE_JWTSECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      VIKUNJA_SERVICE_FRONTENDURL: http://localhost:3000
+      VIKUNJA_LOG_LEVEL: INFO
+    ports:
+      - "3456:3456"
+    networks:
+      - vikunja-internal
+      - vikunja-public
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3456/api/v1/info || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ../../sources/frontend
+      dockerfile: ../../docker/frontend/Dockerfile
+    container_name: vikunja-frontend
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      VIKUNJA_API_URL: http://localhost:3456/api/v1
+    ports:
+      - "3000:80"
+    networks:
+      - vikunja-public
+
+volumes:
+  db_data:
+    driver: local
+
+networks:
+  vikunja-internal:
+    driver: bridge
+    internal: true
+  vikunja-public:
+    driver: bridge
